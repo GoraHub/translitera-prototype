@@ -102,7 +102,8 @@ async function translate(text, from, to, engine) {
 
 async function preload(cfg) {
   const { asrSize, engine, langs, cpuOnly } = cfg;
-  const asr = await getASR(asrSize, cpuOnly);
+  // 'apple' = the phone's own dictation does the speech recognition, so no Whisper model is needed
+  const asr = asrSize === 'apple' ? { device: 'wasm' } : await getASR(asrSize, cpuOnly);
   if (engine === 'nllb') {
     await getMT(NLLB, 'Translation (direct)');
   } else {

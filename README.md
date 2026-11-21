@@ -26,6 +26,10 @@ To hear translations, the phone needs the voices installed: *Settings › Access
 | Speech recognition | Whisper base (~0.2 GB) / Whisper small (~0.5 GB) | small is more accurate but slower |
 | Show the English step | on / off | shows the intermediate English for OPUS-MT |
 
+## Apple dictation (demo only)
+
+Settings › Speech recognition › **Apple dictation** uses the iPhone's own dictation instead of Whisper. It recognises Finnish, Ukrainian and Russian far better than the Whisper models that fit in Safari, but **the audio may be processed on Apple's servers**, so use it only for demos and role-play – never with real patients. In always-on mode it takes turns: after each translation it listens for the other language (tap *Switch to …* if the same person speaks twice).
+
 ## Privacy
 
 - Audio and text never leave the phone. There is no server, no analytics and no logging.

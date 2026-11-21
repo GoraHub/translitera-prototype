@@ -48,6 +48,7 @@
     <img src="assets/speaker.webp" alt="">
   </button>
   <div class="live-status small" id="liveStatus" aria-live="polite">Tap the speaker to start always-on translation</div>
+  <button class="link-btn small" id="liveSwitch" type="button" hidden>Switch language</button>
   <div class="mics">
     <button class="mic" id="micA" data-lang="fi">
       <span class="aura" aria-hidden="true"></span>
@@ -92,7 +93,8 @@
     </label>
     <label class="field">Speech recognition
       <select id="optAsr">
-        <option value="base">Whisper base: faster (~0.2 GB)</option>
+        <option value="apple">Apple dictation – DEMO ONLY, audio may go to Apple</option>
+        <option value="base">Whisper base: offline, weak in Finnish (~0.3 GB)</option>
         <option value="small">Whisper small: more accurate, runs on CPU (~0.3 GB)</option>
       </select>
     </label>

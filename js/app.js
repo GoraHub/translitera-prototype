@@ -6,11 +6,12 @@ const LANG_NAME = { fi: 'Suomi', uk: 'Українська', ru: 'Русский
 const LANG_CODE = { fi: 'FI', uk: 'UA', ru: 'RU' };
 const LANG_EN = { fi: 'Finnish', uk: 'Ukrainian', ru: 'Russian' };
 const TTS_LANG = { fi: 'fi-FI', uk: 'uk-UA', ru: 'ru-RU' };
-const SIZE_GB = { base: 0.3, small: 0.3, opus: 0.45, nllb: 0.9 };
+const SIZE_GB = { apple: 0, base: 0.3, small: 0.3, opus: 0.45, nllb: 0.9 };
 
 const DEFAULTS = { lang: 'uk', engine: 'opus', asr: 'base', speak: true, showEn: false, cpuOnly: false, pauseMs: 800, releaseMic: true };
 const settings = Object.assign({}, DEFAULTS, load('tl-proto-settings', {}));
 if (settings.asr === 'turbo') settings.asr = 'small';
+if (!load('tl-proto-settings', null) && (window.SpeechRecognition || window.webkitSpeechRecognition)) settings.asr = 'apple';
 let turns = load('tl-proto-turns', []);
 let ready = false;
 let device = '–';
@@ -219,7 +220,7 @@ async function runTurn({ lang, audio, seconds, text, input, onSpoken, endedAt })
     turn.dst = t.text; turn.mtMs = Math.round(t.ms); turn.route = t.route; turn.en = t.english || null; turn.state = '';
     if (endedAt) turn.waitMs = Math.round(performance.now() - endedAt);
     finish(turn);
-    if (input === 'live' && live.on) liveSet('speaking');
+    if ((input === 'live' || input === 'apple-live') && live.on) liveSet('speaking');
     const spoken = speak(turn.dst, turn.to, onSpoken);
     if (settings.speak && !spoken) { turn.noVoice = true; finish(turn); }
     return;
@@ -246,6 +247,7 @@ function renderAll() {
     if (!t.state) {
       const parts = [];
       if (t.auto) parts.push('Always on' + (t.rerun ? ' (language re-checked)' : ''));
+      if (t.input === 'apple' || t.input === 'apple-live') parts.push('Apple dictation (demo)' + (t.input === 'apple-live' ? ' · always on' : ''));
       if (t.seconds) parts.push('Spoke ' + t.seconds.toFixed(1) + ' s');
       if (t.waitMs != null) parts.push('Wait ' + (t.waitMs / 1000).toFixed(1) + ' s');
       if (t.asrMs != null) parts.push('Recognition ' + (t.asrMs / 1000).toFixed(1) + ' s');
@@ -286,10 +288,13 @@ async function liveStart() {
   live.on = true;
   $('dock').classList.add('live'); document.body.classList.add('is-live');
   try { live.wake = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch (e) { live.wake = null; }
+  if (appleMode()) { appleLiveNext(live.appleLang || 'fi'); return; }
   await liveListen();
 }
 function liveStop() {
   live.on = false;
+  appleStopAll();
+  $('liveSwitch').hidden = true;
   liveRelease();
   if (window.speechSynthesis) speechSynthesis.cancel();
   try { if (live.wake) live.wake.release(); } catch (e) { /* ignore */ }
@@ -367,6 +372,72 @@ async function liveEndUtterance(seconds) {
   if (live.on && live.state === 'working' && window.speechSynthesis && speechSynthesis.speaking) liveSet('speaking');
 }
 
+
+// ------------------------------------------------------------------ Apple dictation (demo only)
+// Uses the browser's built-in speech recognition (Siri dictation on iPhone). It may send audio to Apple,
+// so it is for demos and role-play only. It needs a language up front, so in always-on mode it takes turns:
+// after each translation it listens for the other language. The language can also be switched by tapping the label.
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const appleMode = () => settings.asr === 'apple';
+let apple = null; // { rec, lang, live, text, t0 }
+
+function appleListen(lang, live) {
+  if (!SR) { $('hint').textContent = 'This browser has no built-in speech recognition. Choose Whisper in Settings.'; return false; }
+  const rec = new SR();
+  rec.lang = TTS_LANG[lang];
+  rec.interimResults = true;
+  rec.continuous = !live; // buttons: until tapped again; always on: ends at a pause
+  rec.maxAlternatives = 1;
+  const st = { rec, lang, live, text: '', t0: performance.now(), stopped: false };
+  apple = st;
+  rec.onresult = (ev) => {
+    let t = '';
+    for (let i = 0; i < ev.results.length; i++) t += ev.results[i][0].transcript;
+    st.text = t.trim();
+    if (live) { $('liveStatus').textContent = '“' + st.text + '”'; }
+    else $('hint').textContent = st.text || 'Listening…';
+  };
+  rec.onerror = (ev) => {
+    st.error = ev.error;
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+      const msg = 'Speech recognition not allowed. iPhone: Settings › Apps › Safari › Microphone, and Settings › General › Keyboard › Enable Dictation.';
+      if (live) { liveStop(); $('liveStatus').textContent = msg; } else $('hint').textContent = msg;
+    }
+  };
+  rec.onend = () => { if (apple === st) apple = null; appleDone(st); };
+  try { rec.start(); } catch (e) { apple = null; return false; }
+  return true;
+}
+async function appleDone(st) {
+  if (st.handled) return; st.handled = true;
+  const text = st.text;
+  if (st.live) {
+    if (!live.on) return;
+    if (!text) { // nothing heard: keep listening for the same language
+      if (st.error === 'not-allowed') return;
+      setTimeout(() => appleLiveNext(st.lang), 200); return;
+    }
+    liveSet('working');
+    await runTurn({ lang: st.lang, text, input: 'apple-live', seconds: (performance.now() - st.t0) / 1000, endedAt: performance.now(),
+      onSpoken: () => { if (live.on) setTimeout(() => appleLiveNext(otherOf(st.lang)), 250); } });
+    return;
+  }
+  document.querySelectorAll('.mic').forEach((b) => b.classList.remove('rec'));
+  recLang = null;
+  $('hint').textContent = 'Tap a language, speak, tap again to translate.';
+  if (text) { busy = true; setMicsDisabled(true); try { await runTurn({ lang: st.lang, text, input: 'apple' }); } finally { busy = false; setMicsDisabled(false); } }
+}
+function appleLiveNext(lang) {
+  if (!live.on) return;
+  live.appleLang = lang;
+  liveSet('listening');
+  $('liveStatus').textContent = 'Listening for ' + LANG_NAME[lang] + '…';
+  $('liveSwitch').hidden = false;
+  $('liveSwitch').textContent = 'Switch to ' + LANG_NAME[otherOf(lang)];
+  if (!appleListen(lang, true)) { $('liveStatus').textContent = 'Tap the speaker to continue'; live.on = false; $('dock').classList.remove('live'); document.body.classList.remove('is-live'); }
+}
+function appleStopAll() { if (apple) { const st = apple; st.handled = true; apple = null; try { st.rec.abort(); } catch (e) { /* ignore */ } } }
+
 // ------------------------------------------------------------------ mic buttons
 function labels() {
   $('micALabel').textContent = LANG_NAME.fi;
@@ -379,6 +450,12 @@ let busy = false;
 async function onMic(btn) {
   if (!ready || busy) return;
   const lang = btn.dataset.lang;
+  if (appleMode()) {
+    if (apple) { const st = apple; try { st.rec.stop(); } catch (e) { appleDone(st); } $('hint').textContent = 'Working…'; return; }
+    primeSpeech();
+    if (appleListen(lang, false)) { recLang = lang; btn.classList.add('rec'); $('hint').textContent = 'Listening in ' + LANG_NAME[lang] + '… tap again when done.'; }
+    return;
+  }
   if (recLang) { // stop
     const was = recLang;
     recLang = null;
@@ -466,6 +543,7 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catc
 
 // ------------------------------------------------------------------ wire up
 $('downloadBtn').onclick = start;
+$('liveSwitch').onclick = () => { if (!live.on || !appleMode()) return; const next = otherOf(live.appleLang || 'fi'); appleStopAll(); appleLiveNext(next); };
 $('liveBtn').onclick = () => { if (!ready) return; if (live.on) liveStop(); else liveStart(); };
 $('micA').onclick = () => onMic($('micA'));
 $('micB').onclick = () => onMic($('micB'));
