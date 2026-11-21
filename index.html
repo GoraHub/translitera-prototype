@@ -34,6 +34,7 @@
       <div class="bar"><div class="fill" id="progressFill"></div></div>
       <div class="small muted" id="progressText">Preparing…</div>
     </div>
+    <div class="small muted" id="setupHint" hidden></div>
     <div class="error" id="setupError" hidden></div>
   </section>
 
@@ -91,6 +92,7 @@
     </label>
     <label class="check"><input type="checkbox" id="optSpeak" checked> Speak translations aloud</label>
     <label class="check"><input type="checkbox" id="optShowEn"> Show the English step (OPUS-MT)</label>
+    <label class="check"><input type="checkbox" id="optCpu"> Run AI on CPU only (slower, but works on more phones)</label>
     <div class="device small muted" id="deviceInfo"></div>
     <div class="sheet-actions">
       <button class="btn" type="button" id="exportBtn">Export test results</button>

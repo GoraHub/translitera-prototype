@@ -26,6 +26,7 @@ const NLLB_CODE = { fi: 'fin_Latn', uk: 'ukr_Cyrl', ru: 'rus_Cyrl', en: 'eng_Lat
 
 const cache = new Map(); // key -> pipeline promise
 let gpuOk = null;
+const stage = (text) => postMessage({ type: 'stage', text });
 
 async function hasWebGPU() {
   if (gpuOk !== null) return gpuOk;
@@ -43,11 +44,12 @@ function progressFor(label) {
   };
 }
 
-async function getASR(size) {
-  const key = 'asr:' + size;
+async function getASR(size, cpuOnly) {
+  const key = 'asr:' + size + (cpuOnly ? ':cpu' : '');
   if (!cache.has(key)) {
     cache.set(key, (async () => {
-      const gpu = await hasWebGPU();
+      const gpu = !cpuOnly && (await hasWebGPU());
+      stage('Starting speech recognition on ' + (gpu ? 'GPU' : 'CPU') + '…');
       const opts = gpu
         ? { device: 'webgpu', dtype: { encoder_model: 'fp32', decoder_model_merged: 'q4' } }
         : { device: 'wasm', dtype: 'q8' };
@@ -56,9 +58,10 @@ async function getASR(size) {
       } catch (e) {
         if (opts.device !== 'webgpu') throw e;
         // WebGPU failed on this device: fall back to WebAssembly
+        stage('GPU did not work (' + String(e && e.message || e).slice(0, 80) + '). Switching to CPU…');
         return { pipe: await pipeline('automatic-speech-recognition', WHISPER[size], { device: 'wasm', dtype: 'q8', progress_callback: progressFor('Speech ' + size) }), device: 'wasm' };
       }
-    })());
+    })().catch((e) => { cache.delete(key); throw e; }));
   }
   return cache.get(key);
 }
@@ -66,6 +69,7 @@ async function getASR(size) {
 async function getMT(model, label) {
   const key = 'mt:' + model;
   if (!cache.has(key)) {
+    stage('Starting ' + label + '…');
     cache.set(key, pipeline('translation', model, { device: 'wasm', dtype: 'q8', progress_callback: progressFor(label) })
       .catch((e) => { cache.delete(key); throw e; }));
   }
@@ -97,8 +101,8 @@ async function translate(text, from, to, engine) {
 }
 
 async function preload(cfg) {
-  const { asrSize, engine, langs } = cfg;
-  await getASR(asrSize);
+  const { asrSize, engine, langs, cpuOnly } = cfg;
+  const asr = await getASR(asrSize, cpuOnly);
   if (engine === 'nllb') {
     await getMT(NLLB, 'Translation (direct)');
   } else {
@@ -107,9 +111,7 @@ async function preload(cfg) {
       await getMT(OPUS['en>' + l], 'Translation EN→' + l.toUpperCase());
     }
   }
-  // warm up so the first real sentence is not slow
-  const asr = await getASR(asrSize);
-  await asr.pipe(new Float32Array(16000), { language: 'finnish', task: 'transcribe' });
+  stage('Ready');
   return { device: asr.device };
 }
 
@@ -120,7 +122,8 @@ self.onmessage = async (e) => {
       const r = await preload(m.cfg);
       postMessage({ type: 'ready', id: m.id, device: r.device, webgpu: await hasWebGPU() });
     } else if (m.type === 'transcribe') {
-      const asr = await getASR(m.asrSize);
+      stage('Recognising speech…');
+      const asr = await getASR(m.asrSize, m.cpuOnly);
       const t0 = performance.now();
       const out = await asr.pipe(m.audio, { language: WHISPER_LANG[m.lang], task: 'transcribe', chunk_length_s: 30 });
       postMessage({ type: 'transcribed', id: m.id, text: (out.text || '').trim(), ms: performance.now() - t0, device: asr.device });

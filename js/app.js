@@ -8,7 +8,7 @@ const LANG_EN = { fi: 'Finnish', uk: 'Ukrainian', ru: 'Russian' };
 const TTS_LANG = { fi: 'fi-FI', uk: 'uk-UA', ru: 'ru-RU' };
 const SIZE_GB = { base: 0.2, small: 0.5, opus: 0.45, nllb: 0.9 };
 
-const DEFAULTS = { lang: 'uk', engine: 'opus', asr: 'base', speak: true, showEn: false };
+const DEFAULTS = { lang: 'uk', engine: 'opus', asr: 'base', speak: true, showEn: false, cpuOnly: false };
 const settings = Object.assign({}, DEFAULTS, load('tl-proto-settings', {}));
 let turns = load('tl-proto-turns', []);
 let ready = false;
@@ -25,6 +25,8 @@ const pending = new Map();
 const files = new Map(); // progress per file
 worker.onmessage = (e) => {
   const m = e.data;
+  lastMsg = Date.now();
+  if (m.type === 'stage') return onStage(m.text);
   if (m.type === 'progress') return onProgress(m);
   const p = pending.get(m.id);
   if (!p) return;
@@ -40,6 +42,29 @@ function call(msg, transfer) {
   });
 }
 
+let lastMsg = Date.now(), stageText = '', stageT0 = 0, tick = null;
+function onStage(t) {
+  stageText = t; stageT0 = Date.now();
+  if (!ready) $('progressText').textContent = t;
+}
+function startTicker() {
+  clearInterval(tick);
+  tick = setInterval(() => {
+    if (ready) return clearInterval(tick);
+    const quiet = (Date.now() - lastMsg) / 1000;
+    if (stageText && stageText !== 'Ready') {
+      $('progressText').textContent = stageText + ' ' + Math.round((Date.now() - stageT0) / 1000) + ' s';
+    }
+    const hint = $('setupHint');
+    if (quiet > 90) {
+      hint.hidden = false;
+      hint.textContent = settings.cpuOnly
+        ? 'This is taking very long. The phone may be out of memory: close other apps and reload the page.'
+        : 'This is taking very long. Try Settings › “Run AI on CPU only”, then reload the page.';
+    } else hint.hidden = true;
+  }, 1000);
+}
+
 function onProgress(m) {
   if (!m.file) return;
   const key = m.label + '|' + m.file;
@@ -52,7 +77,8 @@ function onProgress(m) {
   for (const v of files.values()) { loaded += v.loaded; total += v.total; }
   const pct = total ? Math.min(100, (loaded / total) * 100) : 0;
   $('progressFill').style.width = pct.toFixed(1) + '%';
-  $('progressText').textContent = m.label + ' · ' + mb(loaded) + ' / ' + mb(total);
+  $('progressText').textContent = 'Downloading · ' + mb(loaded) + ' / ' + mb(total);
+  stageText = '';
 }
 const mb = (b) => (b / 1048576).toFixed(0) + ' MB';
 
@@ -63,6 +89,7 @@ function setupText() {
   $('setupSize').textContent = 'about ' + gb.toFixed(1).replace('.0', '') + ' GB';
 }
 function showSetupError(t) {
+  clearInterval(tick);
   const el = $('setupError');
   el.hidden = false;
   el.textContent = t;
@@ -76,9 +103,10 @@ async function start() {
   $('progressWrap').hidden = false;
   $('progressText').textContent = 'Preparing…';
   files.clear();
+  lastMsg = Date.now(); startTicker();
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) { /* ignore */ }
   try {
-    const r = await call({ type: 'preload', cfg: { asrSize: settings.asr, engine: settings.engine, langs: ['fi', settings.lang] } });
+    const r = await call({ type: 'preload', cfg: { asrSize: settings.asr, engine: settings.engine, langs: ['fi', settings.lang], cpuOnly: settings.cpuOnly } });
     device = r.device; webgpu = r.webgpu; ready = true;
     $('setup').hidden = true;
     $('dock').hidden = false;
@@ -167,7 +195,7 @@ async function runTurn({ lang, audio, seconds, text, input }) {
   turns.push(turn); renderAll(); scrollEnd();
   try {
     if (audio) {
-      const r = await call({ type: 'transcribe', audio, lang, asrSize: settings.asr }, [audio.buffer]);
+      const r = await call({ type: 'transcribe', audio, lang, asrSize: settings.asr, cpuOnly: settings.cpuOnly }, [audio.buffer]);
       turn.src = r.text; turn.asrMs = Math.round(r.ms); turn.device = r.device;
       if (!turn.src) { turn.state = ''; turn.dst = '(No speech recognised. Try again a little closer to the phone.)'; finish(turn); return; }
       turn.state = 'Translating…'; renderAll();
@@ -268,7 +296,7 @@ function updateDevice() {
 }
 function openSettings() {
   $('optLang').value = settings.lang; $('optEngine').value = settings.engine; $('optAsr').value = settings.asr;
-  $('optSpeak').checked = settings.speak; $('optShowEn').checked = settings.showEn;
+  $('optSpeak').checked = settings.speak; $('optShowEn').checked = settings.showEn; $('optCpu').checked = settings.cpuOnly;
   updateDevice();
   $('settings').showModal();
 }
@@ -276,8 +304,11 @@ function applySettings() {
   const changed = settings.lang !== $('optLang').value || settings.engine !== $('optEngine').value || settings.asr !== $('optAsr').value;
   settings.lang = $('optLang').value; settings.engine = $('optEngine').value; settings.asr = $('optAsr').value;
   settings.speak = $('optSpeak').checked; settings.showEn = $('optShowEn').checked;
+  const cpuChanged = settings.cpuOnly !== $('optCpu').checked;
+  settings.cpuOnly = $('optCpu').checked;
   save('tl-proto-settings', settings);
   $('settings').close();
+  if (cpuChanged) { location.reload(); return; }
   labels(); setupText(); renderAll();
   if (changed && ready) { ready = false; $('dock').hidden = true; $('setup').hidden = false; $('downloadBtn').textContent = 'Download and start'; start(); }
 }
