@@ -1,9 +1,9 @@
 // Keeps the app itself available offline. The AI models are cached separately by Transformers.js.
-const CACHE = 'translitera-proto-v7';
+const CACHE = 'translitera-proto-v8';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'js/app.js', 'js/worker.js', 'js/phrases.js',
   'lib/transformers.min.js', 'lib/ort-wasm-simd-threaded.jsep.mjs', 'lib/ort-wasm-simd-threaded.jsep.wasm',
-  'assets/logo.svg', 'assets/speaker.webp', 'assets/icon-180.png', 'assets/icon-192.png', 'assets/icon-512.png',
+  'assets/logo.svg', 'assets/speaker.webp', 'assets/app-icon-180.png', 'assets/app-icon-192.png', 'assets/app-icon-512.png',
   'manifest.webmanifest',
 ];
 
