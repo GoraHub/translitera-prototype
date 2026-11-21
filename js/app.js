@@ -8,7 +8,7 @@ const LANG_EN = { fi: 'Finnish', uk: 'Ukrainian', ru: 'Russian' };
 const TTS_LANG = { fi: 'fi-FI', uk: 'uk-UA', ru: 'ru-RU' };
 const SIZE_GB = { base: 0.2, small: 0.5, opus: 0.45, nllb: 0.9 };
 
-const DEFAULTS = { lang: 'uk', engine: 'opus', asr: 'base', speak: true, showEn: false, cpuOnly: false };
+const DEFAULTS = { lang: 'uk', engine: 'opus', asr: 'base', speak: true, showEn: false, cpuOnly: false, pauseMs: 800, releaseMic: true };
 const settings = Object.assign({}, DEFAULTS, load('tl-proto-settings', {}));
 let turns = load('tl-proto-turns', []);
 let ready = false;
@@ -175,11 +175,17 @@ function voiceFor(lang) {
   const code = TTS_LANG[lang];
   return voices.find((v) => v.lang === code && v.localService) || voices.find((v) => v.lang === code) || voices.find((v) => v.lang && v.lang.startsWith(lang));
 }
-function speak(text, lang) {
-  if (!settings.speak || !window.speechSynthesis || !text) return false;
+function speak(text, lang, onDone) {
+  if (!settings.speak || !window.speechSynthesis || !text) { if (onDone) onDone(); return false; }
   const v = voiceFor(lang);
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
+  if (onDone) {
+    let done = false;
+    const fin = () => { if (!done) { done = true; clearTimeout(t); onDone(); } };
+    u.onend = fin; u.onerror = fin;
+    const t = setTimeout(fin, 2000 + text.length * 120); // fallback if Safari never fires onend
+  }
   u.lang = TTS_LANG[lang];
   if (v) u.voice = v;
   u.rate = 0.95;
@@ -190,24 +196,34 @@ function speak(text, lang) {
 // ------------------------------------------------------------------ conversation
 const otherOf = (lang) => (lang === 'fi' ? settings.lang : 'fi');
 
-async function runTurn({ lang, audio, seconds, text, input }) {
-  const turn = { id: Date.now() + Math.random(), time: new Date().toISOString(), from: lang, to: otherOf(lang), input, src: text || '', dst: '', en: null, asrMs: null, mtMs: null, seconds: seconds || null, route: '', device, engine: settings.engine, asr: settings.asr, rating: null, state: audio ? 'Listening done · recognising…' : 'Translating…' };
+async function runTurn({ lang, audio, seconds, text, input, onSpoken, endedAt }) {
+  const auto = lang === 'auto';
+  const turn = { id: Date.now() + Math.random(), time: new Date().toISOString(), from: auto ? 'fi' : lang, to: auto ? settings.lang : otherOf(lang), auto, input, src: text || '', dst: '', en: null, asrMs: null, mtMs: null, seconds: seconds || null, route: '', device, engine: settings.engine, asr: settings.asr, rating: null, state: audio ? 'Listening done · recognising…' : 'Translating…' };
   turns.push(turn); renderAll(); scrollEnd();
   try {
     if (audio) {
-      const r = await call({ type: 'transcribe', audio, lang, asrSize: settings.asr, cpuOnly: settings.cpuOnly }, [audio.buffer]);
+      const r = await call({ type: 'transcribe', audio, lang, other: settings.lang, asrSize: settings.asr, cpuOnly: settings.cpuOnly }, [audio.buffer]);
       turn.src = r.text; turn.asrMs = Math.round(r.ms); turn.device = r.device;
-      if (!turn.src) { turn.state = ''; turn.dst = '(No speech recognised. Try again a little closer to the phone.)'; finish(turn); return; }
+      if (auto) { turn.from = r.lang; turn.to = otherOf(r.lang); turn.rerun = r.rerun; }
+      if (!turn.src) {
+        if (auto) { turns.splice(turns.indexOf(turn), 1); renderAll(); if (onSpoken) onSpoken(); return; }
+        turn.state = ''; turn.dst = '(No speech recognised. Try again a little closer to the phone.)'; finish(turn); return;
+      }
       turn.state = 'Translating…'; renderAll();
     }
     const t = await call({ type: 'translate', text: turn.src, from: turn.from, to: turn.to, engine: settings.engine });
     turn.dst = t.text; turn.mtMs = Math.round(t.ms); turn.route = t.route; turn.en = t.english || null; turn.state = '';
-    const spoken = speak(turn.dst, turn.to);
-    if (settings.speak && !spoken) turn.noVoice = true;
+    if (endedAt) turn.waitMs = Math.round(performance.now() - endedAt);
+    finish(turn);
+    if (input === 'live' && live.on) liveSet('speaking');
+    const spoken = speak(turn.dst, turn.to, onSpoken);
+    if (settings.speak && !spoken) { turn.noVoice = true; finish(turn); }
+    return;
   } catch (e) {
     turn.state = ''; turn.dst = 'Error: ' + e.message;
   }
   finish(turn);
+  if (onSpoken) onSpoken();
 }
 function finish(turn) { turn.state = ''; save('tl-proto-turns', turns.map(({ state, ...t }) => t)); renderAll(); scrollEnd(); }
 function scrollEnd() { requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })); }
@@ -225,7 +241,9 @@ function renderAll() {
     card.appendChild(el('div', 'dst', t.state || t.dst));
     if (!t.state) {
       const parts = [];
+      if (t.auto) parts.push('Always on' + (t.rerun ? ' (language re-checked)' : ''));
       if (t.seconds) parts.push('Spoke ' + t.seconds.toFixed(1) + ' s');
+      if (t.waitMs != null) parts.push('Wait ' + (t.waitMs / 1000).toFixed(1) + ' s');
       if (t.asrMs != null) parts.push('Recognition ' + (t.asrMs / 1000).toFixed(1) + ' s');
       if (t.mtMs != null) parts.push('Translation ' + (t.mtMs / 1000).toFixed(1) + ' s');
       if (t.route) parts.push(t.route);
@@ -248,6 +266,101 @@ function renderAll() {
     }
     c.appendChild(card);
   }
+}
+
+
+// ------------------------------------------------------------------ always-on mode
+// Listens continuously. A simple voice detector cuts speech into sentences at pauses;
+// each sentence is recognised (language detected automatically), translated and spoken.
+// While the app is working or speaking it does not listen, so it never translates itself.
+const live = { on: false, state: 'off', stream: null, src: null, proc: null, pre: [], buf: [], speaking: false, silentMs: 0, speechMs: 0, floor: 0.004, frames: 0, wake: null };
+
+async function liveStart() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') await ctx.resume();
+  primeSpeech();
+  live.on = true;
+  $('dock').classList.add('live'); document.body.classList.add('is-live');
+  try { live.wake = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch (e) { live.wake = null; }
+  await liveListen();
+}
+function liveStop() {
+  live.on = false;
+  liveRelease();
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  try { if (live.wake) live.wake.release(); } catch (e) { /* ignore */ }
+  live.wake = null;
+  $('dock').classList.remove('live'); document.body.classList.remove('is-live');
+  liveSet('off');
+}
+function liveSet(state) {
+  live.state = state;
+  const txt = { off: 'Tap the speaker to start always-on translation', listening: 'Listening… speak in either language', hearing: 'Hearing speech…', working: 'Translating…', speaking: 'Speaking…', error: 'Microphone not available' }[state];
+  $('liveStatus').textContent = txt;
+  $('liveBtn').dataset.state = state;
+  $('liveBtn').setAttribute('aria-label', live.on ? 'Pause translation' : 'Start always-on translation');
+}
+async function liveListen() {
+  if (!live.on) return;
+  try {
+    if (!live.stream) {
+      live.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      live.src = ctx.createMediaStreamSource(live.stream);
+      live.proc = ctx.createScriptProcessor(2048, 1, 1);
+      live.proc.onaudioprocess = onLiveAudio;
+      live.src.connect(live.proc);
+      live.proc.connect(ctx.destination);
+    }
+  } catch (e) { liveSet('error'); live.on = false; $('dock').classList.remove('live'); return; }
+  live.pre = []; live.buf = []; live.speaking = false; live.silentMs = 0; live.speechMs = 0; live.frames = 0;
+  liveSet('listening');
+}
+function liveRelease() {
+  if (live.proc) { live.proc.onaudioprocess = null; live.proc.disconnect(); }
+  if (live.src) live.src.disconnect();
+  if (live.stream) live.stream.getTracks().forEach((t) => t.stop());
+  live.proc = live.src = live.stream = null;
+  $('liveBtn').style.setProperty('--lvl', 0);
+}
+function onLiveAudio(ev) {
+  if (live.state !== 'listening' && live.state !== 'hearing') return;
+  const d = ev.inputBuffer.getChannelData(0);
+  const frame = new Float32Array(d);
+  const ms = (frame.length / ctx.sampleRate) * 1000;
+  let sum = 0;
+  for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
+  const rms = Math.sqrt(sum / frame.length);
+  live.frames++;
+  // adaptive noise floor: follows quiet levels quickly, loud levels slowly
+  live.floor = rms < live.floor ? live.floor * 0.9 + rms * 0.1 : live.floor * 0.995 + rms * 0.005;
+  const thr = Math.max(0.012, live.floor * 3.2);
+  const loud = rms > thr && live.frames > 8; // ignore the first ~0.3 s while the floor settles
+  $('liveBtn').style.setProperty('--lvl', Math.min(1, rms / 0.12).toFixed(2));
+  if (!live.speaking) {
+    live.pre.push(frame);
+    if (live.pre.length > 8) live.pre.shift(); // ~0.35 s pre-roll so the first syllable is kept
+    if (loud) { live.speechMs += ms; if (live.speechMs > 120) { live.speaking = true; live.buf = live.pre.slice(); live.silentMs = 0; liveSet('hearing'); } }
+    else live.speechMs = 0;
+    return;
+  }
+  live.buf.push(frame);
+  live.silentMs = loud ? 0 : live.silentMs + ms;
+  const total = live.buf.reduce((n, f) => n + f.length, 0) / ctx.sampleRate;
+  if (live.silentMs >= settings.pauseMs || total > 20) liveEndUtterance(total);
+}
+async function liveEndUtterance(seconds) {
+  const frames = live.buf; live.buf = []; live.speaking = false;
+  const endedAt = performance.now();
+  if (seconds - settings.pauseMs / 1000 < 0.5) { live.pre = []; liveSet('listening'); return; } // too short: a cough or a click
+  liveSet('working');
+  if (settings.releaseMic) liveRelease();
+  const len = frames.reduce((n, f) => n + f.length, 0);
+  const all = new Float32Array(len);
+  let o = 0;
+  for (const f of frames) { all.set(f, o); o += f.length; }
+  const audio = await to16k(all, ctx.sampleRate);
+  await runTurn({ lang: 'auto', audio, seconds, input: 'live', endedAt, onSpoken: () => { if (live.on) setTimeout(liveListen, 250); } });
+  if (live.on && live.state === 'working' && window.speechSynthesis && speechSynthesis.speaking) liveSet('speaking');
 }
 
 // ------------------------------------------------------------------ mic buttons
@@ -297,6 +410,7 @@ function updateDevice() {
 function openSettings() {
   $('optLang').value = settings.lang; $('optEngine').value = settings.engine; $('optAsr').value = settings.asr;
   $('optSpeak').checked = settings.speak; $('optShowEn').checked = settings.showEn; $('optCpu').checked = settings.cpuOnly;
+  $('optPause').value = String(settings.pauseMs); $('optRelease').checked = settings.releaseMic;
   updateDevice();
   $('settings').showModal();
 }
@@ -306,6 +420,7 @@ function applySettings() {
   settings.speak = $('optSpeak').checked; settings.showEn = $('optShowEn').checked;
   const cpuChanged = settings.cpuOnly !== $('optCpu').checked;
   settings.cpuOnly = $('optCpu').checked;
+  settings.pauseMs = +$('optPause').value; settings.releaseMic = $('optRelease').checked;
   save('tl-proto-settings', settings);
   $('settings').close();
   if (cpuChanged) { location.reload(); return; }
@@ -347,6 +462,7 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catc
 
 // ------------------------------------------------------------------ wire up
 $('downloadBtn').onclick = start;
+$('liveBtn').onclick = () => { if (!ready) return; if (live.on) liveStop(); else liveStart(); };
 $('micA').onclick = () => onMic($('micA'));
 $('micB').onclick = () => onMic($('micB'));
 $('settingsBtn').onclick = openSettings;

@@ -125,8 +125,24 @@ self.onmessage = async (e) => {
       stage('Recognising speech…');
       const asr = await getASR(m.asrSize, m.cpuOnly);
       const t0 = performance.now();
-      const out = await asr.pipe(m.audio, { language: WHISPER_LANG[m.lang], task: 'transcribe', chunk_length_s: 30 });
-      postMessage({ type: 'transcribed', id: m.id, text: (out.text || '').trim(), ms: performance.now() - t0, device: asr.device });
+      let lang = m.lang, text, rerun = false;
+      if (lang === 'auto') {
+        // Let Whisper detect the language, then decide by script: Latin = Finnish, Cyrillic = the other language.
+        const out = await asr.pipe(m.audio, { task: 'transcribe', chunk_length_s: 30 });
+        text = (out.text || '').trim();
+        const cyr = (text.match(/[\u0400-\u04FF]/g) || []).length;
+        const lat = (text.match(/[A-Za-zÅÄÖåäö]/g) || []).length;
+        lang = cyr > lat ? m.other : 'fi';
+        // Whisper may confuse Ukrainian and Russian: if letters of the wrong one appear, transcribe again with the language fixed.
+        const wrong = m.other === 'uk' ? /[ыэъё]/i : /[іїєґ]/i;
+        if (lang === m.other && wrong.test(text)) rerun = true;
+        if (lang === 'fi' && cyr === 0 && lat === 0) text = '';
+      }
+      if (lang !== 'auto' && (text === undefined || rerun)) {
+        const out = await asr.pipe(m.audio, { language: WHISPER_LANG[lang], task: 'transcribe', chunk_length_s: 30 });
+        text = (out.text || '').trim();
+      }
+      postMessage({ type: 'transcribed', id: m.id, text, lang, rerun, ms: performance.now() - t0, device: asr.device });
     } else if (m.type === 'translate') {
       const r = await translate(m.text, m.from, m.to, m.engine);
       postMessage({ type: 'translated', id: m.id, ...r });

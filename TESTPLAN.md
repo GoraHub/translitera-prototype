@@ -24,6 +24,18 @@ In each round:
 4. Repeat 3 phrases in **flight mode**.
 5. Export results after each round (Settings → Export test results) and name the file by round and phone.
 
+## Always-on round (the speaker)
+
+The product translates continuously, so this round matters most. Put the phone on the table between the two speakers, tap the speaker once, and talk normally. Nobody touches the phone.
+
+Check and note:
+- **Sentences cut right?** Does it wait for the end of a sentence, or cut people off mid-thought? Try the pause setting at 0.6 s, 0.8 s and 1.2 s.
+- **Language detected right?** Every card should show the right direction (Suomi → Українська or back). Count wrong directions. "Language re-checked" means it caught a Ukrainian/Russian mix-up itself.
+- **Wait time.** "Wait" on each card is the time from the end of speech to the start of the translation. Target: under 3 s.
+- **Loud enough?** With "switch microphone off while speaking" on and off. iPhones may play the voice quietly while the microphone is on.
+- **Talking over each other / background noise.** Does it translate noise, coughs or a crying baby? Does a person speaking during the translation get lost?
+- **Screen stays on** for a 10-minute conversation.
+
 ## What to measure
 
 | Measure | Target for "good enough" | Where it comes from |

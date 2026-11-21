@@ -9,7 +9,8 @@ This is a test tool, not the product. The look follows the Translitera mock-up, 
 1. Open the link in **Safari** (iOS 26 or later recommended – it has WebGPU).
 2. Tap **Share → Add to Home Screen**, then open the app from the home screen. Safari keeps downloaded models more reliably for home-screen apps.
 3. Tap **Download and start** while on Wi-Fi. The first download is about 0.7 GB (Whisper base + OPUS-MT). Keep the screen on until it finishes.
-4. Tap **Suomi** or **Українська**, speak, and tap again to translate. Or use **Test phrases** / **Type instead**.
+4. **Always on:** tap the speaker once and just talk – it detects who speaks which language, translates and speaks the translation. Tap again to pause.
+   Or tap **Suomi** / **Українська**, speak and tap again; or use **Test phrases** / **Type instead**.
 5. Rate each translation: **Good**, **Understandable** or **Wrong**.
 6. Switch on flight mode and try again – it should still work.
 7. Settings → **Export test results** sends a JSON file (via the share sheet) for analysis.

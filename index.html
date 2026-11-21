@@ -42,6 +42,11 @@
 </main>
 
 <footer class="dock" id="dock" hidden>
+  <button class="live-btn" id="liveBtn" data-state="off" aria-label="Start always-on translation">
+    <span class="live-aura" aria-hidden="true"></span>
+    <img src="assets/speaker.webp" alt="">
+  </button>
+  <div class="live-status small" id="liveStatus" aria-live="polite">Tap the speaker to start always-on translation</div>
   <div class="mics">
     <button class="mic" id="micA" data-lang="fi">
       <span class="aura" aria-hidden="true"></span>
@@ -66,7 +71,7 @@
     <input id="typeText" type="text" autocomplete="off" placeholder="Type a sentence…" aria-label="Sentence to translate">
     <button class="btn primary small-btn" type="submit">Go</button>
   </form>
-  <div class="hint small muted" id="hint">Tap a language, speak, tap again to translate.</div>
+  <div class="hint small muted" id="hint">Or tap a language, speak, tap again to translate.</div>
 </footer>
 
 <dialog id="settings">
@@ -92,6 +97,14 @@
     </label>
     <label class="check"><input type="checkbox" id="optSpeak" checked> Speak translations aloud</label>
     <label class="check"><input type="checkbox" id="optShowEn"> Show the English step (OPUS-MT)</label>
+    <label class="field">Always on: pause that ends a sentence
+      <select id="optPause">
+        <option value="600">0.6 s (fast)</option>
+        <option value="800">0.8 s</option>
+        <option value="1200">1.2 s (calm speakers)</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="optRelease"> Always on: switch microphone off while speaking (louder on iPhone)</label>
     <label class="check"><input type="checkbox" id="optCpu"> Run AI on CPU only (slower, but works on more phones)</label>
     <div class="device small muted" id="deviceInfo"></div>
     <div class="sheet-actions">
