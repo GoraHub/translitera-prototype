@@ -12,7 +12,6 @@ env.backends.onnx.wasm.numThreads = 1; // GitHub Pages cannot enable cross-origi
 const WHISPER = {
   base: 'onnx-community/whisper-base',
   small: 'onnx-community/whisper-small',
-  turbo: 'onnx-community/whisper-large-v3-turbo',
 };
 const WHISPER_LANG = { fi: 'finnish', uk: 'ukrainian', ru: 'russian' };
 
@@ -49,19 +48,18 @@ async function getASR(size, cpuOnly) {
   const key = 'asr:' + size + (cpuOnly ? ':cpu' : '');
   if (!cache.has(key)) {
     cache.set(key, (async () => {
-      const gpu = !cpuOnly && (await hasWebGPU());
+      // base: small enough to run uncompressed on the GPU (compressing it ruins accuracy).
+      // small: too big for the GPU in iPhone Safari, so it runs on the CPU with 8-bit weights.
+      const gpu = size === 'base' && !cpuOnly && (await hasWebGPU());
       stage('Starting speech recognition on ' + (gpu ? 'GPU' : 'CPU') + '…');
-      const big = size === 'turbo'; // large model: quantise the encoder too, or it will not fit in a phone browser
-      const opts = gpu
-        ? { device: 'webgpu', dtype: { encoder_model: big ? 'q4' : 'fp32', decoder_model_merged: 'q4' } }
-        : { device: 'wasm', dtype: big ? 'q4' : 'q8' };
+      const cpuOpts = { device: 'wasm', dtype: 'q8' };
+      const opts = gpu ? { device: 'webgpu', dtype: 'fp32' } : cpuOpts;
       try {
         return { pipe: await pipeline('automatic-speech-recognition', WHISPER[size], { ...opts, progress_callback: progressFor('Speech ' + size) }), device: opts.device };
       } catch (e) {
         if (opts.device !== 'webgpu') throw e;
-        // WebGPU failed on this device: fall back to WebAssembly
         stage('GPU did not work (' + String(e && e.message || e).slice(0, 80) + '). Switching to CPU…');
-        return { pipe: await pipeline('automatic-speech-recognition', WHISPER[size], { device: 'wasm', dtype: big ? 'q4' : 'q8', progress_callback: progressFor('Speech ' + size) }), device: 'wasm' };
+        return { pipe: await pipeline('automatic-speech-recognition', WHISPER[size], { ...cpuOpts, progress_callback: progressFor('Speech ' + size) }), device: 'wasm' };
       }
     })().catch((e) => { cache.delete(key); throw e; }));
   }
@@ -117,6 +115,16 @@ async function preload(cfg) {
   return { device: asr.device };
 }
 
+// Stop Whisper from looping ("muni muni muni…"): no repeated 3-word sequences, and a token budget that fits the audio length.
+function genOpts(audio) {
+  const sec = audio.length / 16000;
+  return { task: 'transcribe', chunk_length_s: 30, no_repeat_ngram_size: 3, max_new_tokens: Math.min(220, Math.ceil(sec * 7) + 12) };
+}
+function tidy(text) {
+  // collapse any word repeated more than twice in a row
+  return (text || '').trim().replace(/\b(\S+)(?:[\s,]+\1\b){2,}/giu, '$1');
+}
+
 self.onmessage = async (e) => {
   const m = e.data;
   try {
@@ -130,8 +138,8 @@ self.onmessage = async (e) => {
       let lang = m.lang, text, rerun = false;
       if (lang === 'auto') {
         // Let Whisper detect the language, then decide by script: Latin = Finnish, Cyrillic = the other language.
-        const out = await asr.pipe(m.audio, { task: 'transcribe', chunk_length_s: 30 });
-        text = (out.text || '').trim();
+        const out = await asr.pipe(m.audio, genOpts(m.audio));
+        text = tidy(out.text);
         const cyr = (text.match(/[\u0400-\u04FF]/g) || []).length;
         const lat = (text.match(/[A-Za-zÅÄÖåäö]/g) || []).length;
         lang = cyr > lat ? m.other : 'fi';
@@ -141,8 +149,8 @@ self.onmessage = async (e) => {
         if (lang === 'fi' && cyr === 0 && lat === 0) text = '';
       }
       if (lang !== 'auto' && (text === undefined || rerun)) {
-        const out = await asr.pipe(m.audio, { language: WHISPER_LANG[lang], task: 'transcribe', chunk_length_s: 30 });
-        text = (out.text || '').trim();
+        const out = await asr.pipe(m.audio, { ...genOpts(m.audio), language: WHISPER_LANG[lang] });
+        text = tidy(out.text);
       }
       postMessage({ type: 'transcribed', id: m.id, text, lang, rerun, ms: performance.now() - t0, device: asr.device });
     } else if (m.type === 'translate') {

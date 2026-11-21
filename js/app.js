@@ -6,10 +6,11 @@ const LANG_NAME = { fi: 'Suomi', uk: 'Українська', ru: 'Русский
 const LANG_CODE = { fi: 'FI', uk: 'UA', ru: 'RU' };
 const LANG_EN = { fi: 'Finnish', uk: 'Ukrainian', ru: 'Russian' };
 const TTS_LANG = { fi: 'fi-FI', uk: 'uk-UA', ru: 'ru-RU' };
-const SIZE_GB = { base: 0.2, small: 0.5, turbo: 0.7, opus: 0.45, nllb: 0.9 };
+const SIZE_GB = { base: 0.3, small: 0.3, opus: 0.45, nllb: 0.9 };
 
 const DEFAULTS = { lang: 'uk', engine: 'opus', asr: 'base', speak: true, showEn: false, cpuOnly: false, pauseMs: 800, releaseMic: true };
 const settings = Object.assign({}, DEFAULTS, load('tl-proto-settings', {}));
+if (settings.asr === 'turbo') settings.asr = 'small';
 let turns = load('tl-proto-turns', []);
 let ready = false;
 let device = '–';
@@ -482,7 +483,7 @@ function recoverFromCrash() {
   const last = load('tl-proto-loading', null);
   if (!last) return;
   try { localStorage.removeItem('tl-proto-loading'); } catch (e) { /* ignore */ }
-  const name = { base: 'Whisper base', small: 'Whisper small', turbo: 'Whisper large-v3 turbo' };
+  const name = { base: 'Whisper base', small: 'Whisper small' };
   let msg;
   if (settings.engine === 'nllb') { settings.engine = 'opus'; msg = 'switched the translation engine to the smaller OPUS-MT'; }
   else if (settings.asr !== 'base') { msg = 'switched speech recognition from ' + name[settings.asr] + ' to ' + name.base; settings.asr = 'base'; }
