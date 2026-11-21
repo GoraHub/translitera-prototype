@@ -12,6 +12,7 @@ env.backends.onnx.wasm.numThreads = 1; // GitHub Pages cannot enable cross-origi
 const WHISPER = {
   base: 'onnx-community/whisper-base',
   small: 'onnx-community/whisper-small',
+  turbo: 'onnx-community/whisper-large-v3-turbo',
 };
 const WHISPER_LANG = { fi: 'finnish', uk: 'ukrainian', ru: 'russian' };
 
@@ -50,16 +51,17 @@ async function getASR(size, cpuOnly) {
     cache.set(key, (async () => {
       const gpu = !cpuOnly && (await hasWebGPU());
       stage('Starting speech recognition on ' + (gpu ? 'GPU' : 'CPU') + '…');
+      const big = size === 'turbo'; // large model: quantise the encoder too, or it will not fit in a phone browser
       const opts = gpu
-        ? { device: 'webgpu', dtype: { encoder_model: 'fp32', decoder_model_merged: 'q4' } }
-        : { device: 'wasm', dtype: 'q8' };
+        ? { device: 'webgpu', dtype: { encoder_model: big ? 'q4' : 'fp32', decoder_model_merged: 'q4' } }
+        : { device: 'wasm', dtype: big ? 'q4' : 'q8' };
       try {
         return { pipe: await pipeline('automatic-speech-recognition', WHISPER[size], { ...opts, progress_callback: progressFor('Speech ' + size) }), device: opts.device };
       } catch (e) {
         if (opts.device !== 'webgpu') throw e;
         // WebGPU failed on this device: fall back to WebAssembly
         stage('GPU did not work (' + String(e && e.message || e).slice(0, 80) + '). Switching to CPU…');
-        return { pipe: await pipeline('automatic-speech-recognition', WHISPER[size], { device: 'wasm', dtype: 'q8', progress_callback: progressFor('Speech ' + size) }), device: 'wasm' };
+        return { pipe: await pipeline('automatic-speech-recognition', WHISPER[size], { device: 'wasm', dtype: big ? 'q4' : 'q8', progress_callback: progressFor('Speech ' + size) }), device: 'wasm' };
       }
     })().catch((e) => { cache.delete(key); throw e; }));
   }

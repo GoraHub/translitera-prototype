@@ -6,7 +6,7 @@ const LANG_NAME = { fi: 'Suomi', uk: 'Українська', ru: 'Русский
 const LANG_CODE = { fi: 'FI', uk: 'UA', ru: 'RU' };
 const LANG_EN = { fi: 'Finnish', uk: 'Ukrainian', ru: 'Russian' };
 const TTS_LANG = { fi: 'fi-FI', uk: 'uk-UA', ru: 'ru-RU' };
-const SIZE_GB = { base: 0.2, small: 0.5, opus: 0.45, nllb: 0.9 };
+const SIZE_GB = { base: 0.2, small: 0.5, turbo: 0.7, opus: 0.45, nllb: 0.9 };
 
 const DEFAULTS = { lang: 'uk', engine: 'opus', asr: 'base', speak: true, showEn: false, cpuOnly: false, pauseMs: 800, releaseMic: true };
 const settings = Object.assign({}, DEFAULTS, load('tl-proto-settings', {}));
