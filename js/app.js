@@ -485,8 +485,7 @@ function recoverFromCrash() {
   const name = { base: 'Whisper base', small: 'Whisper small', turbo: 'Whisper large-v3 turbo' };
   let msg;
   if (settings.engine === 'nllb') { settings.engine = 'opus'; msg = 'switched the translation engine to the smaller OPUS-MT'; }
-  else if (settings.asr === 'turbo') { settings.asr = 'small'; msg = 'switched speech recognition from ' + name.turbo + ' to ' + name.small; }
-  else if (settings.asr === 'small') { settings.asr = 'base'; msg = 'switched speech recognition from ' + name.small + ' to ' + name.base; }
+  else if (settings.asr !== 'base') { msg = 'switched speech recognition from ' + name[settings.asr] + ' to ' + name.base; settings.asr = 'base'; }
   else if (!settings.cpuOnly) { settings.cpuOnly = true; msg = 'switched the AI to run on CPU only'; }
   else msg = 'kept the lightest settings. Close other apps and restart the phone, then try again';
   save('tl-proto-settings', settings);
