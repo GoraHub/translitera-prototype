@@ -105,14 +105,17 @@ async function start() {
   files.clear();
   lastMsg = Date.now(); startTicker();
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) { /* ignore */ }
+  save('tl-proto-loading', { asr: settings.asr, engine: settings.engine, cpuOnly: settings.cpuOnly });
   try {
     const r = await call({ type: 'preload', cfg: { asrSize: settings.asr, engine: settings.engine, langs: ['fi', settings.lang], cpuOnly: settings.cpuOnly } });
     device = r.device; webgpu = r.webgpu; ready = true;
+    try { localStorage.removeItem('tl-proto-loading'); } catch (e) { /* ignore */ }
     $('setup').hidden = true;
     $('dock').hidden = false;
     renderAll();
     updateDevice();
   } catch (e) {
+    try { localStorage.removeItem('tl-proto-loading'); } catch (e2) { /* ignore */ }
     showSetupError('Could not load the models: ' + e.message + '. Check the connection and free storage, or try the smaller options in Settings.');
   }
 }
@@ -474,4 +477,22 @@ $('typeBtn').onclick = () => { $('typeRow').hidden = !$('typeRow').hidden; if (!
 $('typeRow').onsubmit = (e) => { e.preventDefault(); const v = $('typeText').value.trim(); if (!v || !ready) return; primeSpeech(); $('typeText').value = ''; runTurn({ lang: $('typeLang').value, text: v, input: 'text' }); };
 function confirmClear() { return turns.length === 0 || window.confirm('Clear the conversation and its ratings from this phone?'); }
 
+// If the last start never finished, the page most likely crashed (out of memory). Step down to a lighter setup.
+function recoverFromCrash() {
+  const last = load('tl-proto-loading', null);
+  if (!last) return;
+  try { localStorage.removeItem('tl-proto-loading'); } catch (e) { /* ignore */ }
+  const name = { base: 'Whisper base', small: 'Whisper small', turbo: 'Whisper large-v3 turbo' };
+  let msg;
+  if (settings.engine === 'nllb') { settings.engine = 'opus'; msg = 'switched the translation engine to the smaller OPUS-MT'; }
+  else if (settings.asr === 'turbo') { settings.asr = 'small'; msg = 'switched speech recognition from ' + name.turbo + ' to ' + name.small; }
+  else if (settings.asr === 'small') { settings.asr = 'base'; msg = 'switched speech recognition from ' + name.small + ' to ' + name.base; }
+  else if (!settings.cpuOnly) { settings.cpuOnly = true; msg = 'switched the AI to run on CPU only'; }
+  else msg = 'kept the lightest settings. Close other apps and restart the phone, then try again';
+  save('tl-proto-settings', settings);
+  const el = $('setupError');
+  el.hidden = false;
+  el.textContent = 'The last start stopped unexpectedly – the phone probably ran out of memory. I ' + msg + '.';
+}
+recoverFromCrash();
 labels(); setupText(); net(); renderAll();
