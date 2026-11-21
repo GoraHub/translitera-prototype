@@ -107,7 +107,7 @@ async function start() {
   files.clear();
   lastMsg = Date.now(); startTicker();
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) { /* ignore */ }
-  save('tl-proto-loading', { asr: settings.asr, engine: settings.engine, cpuOnly: settings.cpuOnly });
+  if (settings.asr !== 'apple' || settings.engine === 'nllb') save('tl-proto-loading', { asr: settings.asr, engine: settings.engine, cpuOnly: settings.cpuOnly });
   try {
     const r = await call({ type: 'preload', cfg: { asrSize: settings.asr, engine: settings.engine, langs: ['fi', settings.lang], cpuOnly: settings.cpuOnly } });
     device = r.device; webgpu = r.webgpu; ready = true;
@@ -388,12 +388,22 @@ function appleListen(lang, live) {
   rec.interimResults = true;
   rec.continuous = !live; // buttons: until tapped again; always on: ends at a pause
   rec.maxAlternatives = 1;
-  const st = { rec, lang, live, text: '', t0: performance.now(), stopped: false };
+  const st = { rec, lang, live, text: '', t0: performance.now(), stopped: false, quiet: null, kill: null };
   apple = st;
+  // Safari on iPhone does not always end recognition or report that it ended, so we do it ourselves:
+  // in always-on mode, 1.2 s without new words ends the sentence; any stop() gets 1.5 s before we carry on anyway.
+  st.finish = () => {
+    if (st.stopped) return; st.stopped = true;
+    clearTimeout(st.quiet);
+    try { rec.stop(); } catch (e) { /* ignore */ }
+    st.kill = setTimeout(() => { try { rec.abort(); } catch (e) { /* ignore */ } if (apple === st) apple = null; appleDone(st); }, 1500);
+  };
+  if (live) st.quiet = setTimeout(() => { if (!st.text) st.finish(); }, 8000); // nobody spoke: restart listening
   rec.onresult = (ev) => {
     let t = '';
     for (let i = 0; i < ev.results.length; i++) t += ev.results[i][0].transcript;
     st.text = t.trim();
+    if (live) { clearTimeout(st.quiet); st.quiet = setTimeout(st.finish, settings.pauseMs + 400); }
     if (live) { $('liveStatus').textContent = '“' + st.text + '”'; }
     else $('hint').textContent = st.text || 'Listening…';
   };
@@ -402,9 +412,11 @@ function appleListen(lang, live) {
     if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
       const msg = 'Speech recognition not allowed. iPhone: Settings › Apps › Safari › Microphone, and Settings › General › Keyboard › Enable Dictation.';
       if (live) { liveStop(); $('liveStatus').textContent = msg; } else $('hint').textContent = msg;
+    } else if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
+      (live ? $('liveStatus') : $('hint')).textContent = 'Dictation error: ' + ev.error;
     }
   };
-  rec.onend = () => { if (apple === st) apple = null; appleDone(st); };
+  rec.onend = () => { clearTimeout(st.quiet); clearTimeout(st.kill); if (apple === st) apple = null; appleDone(st); };
   try { rec.start(); } catch (e) { apple = null; return false; }
   return true;
 }
@@ -436,7 +448,7 @@ function appleLiveNext(lang) {
   $('liveSwitch').textContent = 'Switch to ' + LANG_NAME[otherOf(lang)];
   if (!appleListen(lang, true)) { $('liveStatus').textContent = 'Tap the speaker to continue'; live.on = false; $('dock').classList.remove('live'); document.body.classList.remove('is-live'); }
 }
-function appleStopAll() { if (apple) { const st = apple; st.handled = true; apple = null; try { st.rec.abort(); } catch (e) { /* ignore */ } } }
+function appleStopAll() { if (apple) { const st = apple; st.handled = true; st.stopped = true; clearTimeout(st.quiet); clearTimeout(st.kill); apple = null; try { st.rec.abort(); } catch (e) { /* ignore */ } } }
 
 // ------------------------------------------------------------------ mic buttons
 function labels() {
@@ -451,7 +463,7 @@ async function onMic(btn) {
   if (!ready || busy) return;
   const lang = btn.dataset.lang;
   if (appleMode()) {
-    if (apple) { const st = apple; try { st.rec.stop(); } catch (e) { appleDone(st); } $('hint').textContent = 'Working…'; return; }
+    if (apple) { apple.finish(); $('hint').textContent = 'Working…'; return; }
     primeSpeech();
     if (appleListen(lang, false)) { recLang = lang; btn.classList.add('rec'); $('hint').textContent = 'Listening in ' + LANG_NAME[lang] + '… tap again when done.'; }
     return;
@@ -564,6 +576,7 @@ function recoverFromCrash() {
   const name = { base: 'Whisper base', small: 'Whisper small' };
   let msg;
   if (settings.engine === 'nllb') { settings.engine = 'opus'; msg = 'switched the translation engine to the smaller OPUS-MT'; }
+  else if (settings.asr === 'apple') { return; } // Apple dictation loads no speech model, so memory is not the cause
   else if (settings.asr !== 'base') { msg = 'switched speech recognition from ' + name[settings.asr] + ' to ' + name.base; settings.asr = 'base'; }
   else if (!settings.cpuOnly) { settings.cpuOnly = true; msg = 'switched the AI to run on CPU only'; }
   else msg = 'kept the lightest settings. Close other apps and restart the phone, then try again';
